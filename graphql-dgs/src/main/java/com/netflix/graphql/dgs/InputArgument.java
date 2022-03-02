@@ -31,5 +31,6 @@ public @interface InputArgument {
 
     String name() default "";
 
+    @Deprecated
     Class<?> collectionType() default Object.class;
 }

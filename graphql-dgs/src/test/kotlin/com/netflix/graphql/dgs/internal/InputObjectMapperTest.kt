@@ -27,22 +27,21 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
-import kotlin.reflect.KClass
 
 internal class InputObjectMapperTest {
     private val currentDate = LocalDateTime.now()
-    private val input = mutableMapOf<String, Any>(
+    private val input = mapOf<String, Any>(
         "simpleString" to "hello",
         "someDate" to currentDate,
         "someObject" to mapOf("key1" to "value1", "key2" to currentDate, "key3" to mapOf("subkey1" to "hi"))
     )
 
-    private val inputKotlinJavaMix = mutableMapOf<String, Any>(
+    private val inputKotlinJavaMix = mapOf(
         "name" to "dgs",
         "objectProperty" to input
     )
 
-    private val inputWithNulls = mutableMapOf<String, Any?>(
+    private val inputWithNulls = mapOf(
         "simpleString" to null,
         "someDate" to currentDate,
         "someObject" to mapOf("key1" to "value1", "key2" to currentDate, "key3" to null)
@@ -136,20 +135,9 @@ internal class InputObjectMapperTest {
     }
 
     @Test
-    fun `If none of the properties match the fields in a Java object, an exception should be thrown`() {
-        val input = mapOf(
-            "unknown" to "The String",
-        )
-
-        assertThatThrownBy { inputObjectMapper.mapToJavaObject(input, JInputObject::class.java) }.isInstanceOf(
-            DgsInvalidInputArgumentException::class.java
-        )
-    }
-
-    @Test
     fun `An unknown property should be ignored on a Kotlin object`() {
         val inputWithNewProperty = input.toMutableMap()
-        inputWithNewProperty["unkown"] = "something"
+        inputWithNewProperty["unknown"] = "something"
 
         val mapToObject = inputObjectMapper.mapToKotlinObject(inputWithNewProperty, KotlinInputObject::class)
         assertThat(mapToObject).isNotNull
@@ -159,23 +147,18 @@ internal class InputObjectMapperTest {
     @Test
     fun `An input argument of the wrong type should throw a DgsInvalidArgumentException for a Java object`() {
         val newInput = input.toMutableMap()
-        // Use an Int as input where a String was expected
-        newInput["simpleString"] = 1
-
-        assertThatThrownBy { inputObjectMapper.mapToJavaObject(newInput, JInputObject::class.java) }.isInstanceOf(
-            DgsInvalidInputArgumentException::class.java
-        ).hasMessageStartingWith("Invalid input argument `1` for field `simpleString` on type `com.netflix.graphql.dgs.internal.java.test.inputobjects.JInputObject`")
+        newInput["simpleString"] = LocalDateTime.now()
+        assertThatThrownBy { inputObjectMapper.mapToJavaObject(newInput, JInputObject::class.java) }
+            .isInstanceOf(DgsInvalidInputArgumentException::class.java)
     }
 
     @Test
     fun `An input argument of the wrong type should throw a DgsInvalidArgumentException for a Kotlin object`() {
         val newInput = input.toMutableMap()
-        // Use an Int as input where a String was expected
-        newInput["simpleString"] = 1
+        newInput["simpleString"] = LocalDateTime.now()
 
-        assertThatThrownBy { inputObjectMapper.mapToKotlinObject(newInput, KotlinInputObject::class) }.isInstanceOf(
-            DgsInvalidInputArgumentException::class.java
-        ).hasMessageStartingWith("Provided input arguments")
+        assertThatThrownBy { inputObjectMapper.mapToKotlinObject(newInput, KotlinInputObject::class) }
+            .isInstanceOf(DgsInvalidInputArgumentException::class.java)
     }
 
     @Test
@@ -206,46 +189,6 @@ internal class InputObjectMapperTest {
         val withMap = inputObjectMapper.mapToJavaObject(input, JInputObjectWithMap::class.java)
         assertThat(withMap.json).isInstanceOf(Map::class.java)
         assertThat(withMap.json["key1"]).isEqualTo("value1")
-    }
-
-    @Test
-    fun `A custom object mapper should be used if available`() {
-
-        val customInputObjectMapper = object : InputObjectMapper {
-            override fun <T : Any> mapToKotlinObject(inputMap: Map<String, *>, targetClass: KClass<T>): T {
-                val filtered = inputMap.filterKeys { !it.startsWith("simple") }
-                return DefaultInputObjectMapper(this).mapToKotlinObject(filtered, targetClass)
-            }
-
-            override fun <T> mapToJavaObject(inputMap: Map<String, *>, targetClass: Class<T>): T {
-                TODO("Not yet implemented")
-            }
-        }
-
-        val rootObject = mapOf("input" to input)
-        val mapToObject = DefaultInputObjectMapper(customInputObjectMapper).mapToKotlinObject(rootObject, KotlinNestedInputObject::class)
-        assertThat(mapToObject.input.someObject).isNotNull
-        assertThat(mapToObject.input.simpleString).isNull()
-    }
-
-    @Test
-    fun `A custom object mapper should work recursively`() {
-
-        val customInputObjectMapper = object : InputObjectMapper {
-            override fun <T : Any> mapToKotlinObject(inputMap: Map<String, *>, targetClass: KClass<T>): T {
-                val filtered = inputMap.filterKeys { !it.startsWith("simple") }
-                return DefaultInputObjectMapper(this).mapToKotlinObject(filtered, targetClass)
-            }
-
-            override fun <T> mapToJavaObject(inputMap: Map<String, *>, targetClass: Class<T>): T {
-                TODO("Not yet implemented")
-            }
-        }
-
-        val rootObject = mapOf("inputL1" to mapOf("input" to input))
-        val mapToObject = DefaultInputObjectMapper(customInputObjectMapper).mapToKotlinObject(rootObject, KotlinDoubleNestedInputObject::class)
-        assertThat(mapToObject.inputL1.input.someObject).isNotNull
-        assertThat(mapToObject.inputL1.input.simpleString).isNull()
     }
 
     data class KotlinInputObject(val simpleString: String?, val someDate: LocalDateTime, val someObject: KotlinSomeObject)

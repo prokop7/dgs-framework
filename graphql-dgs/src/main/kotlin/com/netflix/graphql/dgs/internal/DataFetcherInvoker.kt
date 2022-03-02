@@ -16,7 +16,6 @@
 
 package com.netflix.graphql.dgs.internal
 
-import com.fasterxml.jackson.module.kotlin.isKotlinClass
 import com.netflix.graphql.dgs.DgsDataFetchingEnvironment
 import com.netflix.graphql.dgs.InputArgument
 import com.netflix.graphql.dgs.context.DgsContext
@@ -38,7 +37,6 @@ import org.springframework.web.bind.annotation.ValueConstants
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.lang.reflect.Parameter
-import java.lang.reflect.ParameterizedType
 import java.util.*
 import kotlin.coroutines.Continuation
 import kotlin.reflect.full.callSuspend
@@ -90,7 +88,7 @@ class DataFetcherInvoker(
 
                 environment.containsArgument(parameterNames[idx]) -> {
                     val parameterValue: Any = environment.getArgument(parameterNames[idx])
-                    val convertValue = convertValue(parameterValue, parameter, null)
+                    val convertValue = inputObjectMapper.convert(parameterValue, parameter.parameterizedType)
                     args.add(convertValue)
                 }
 
@@ -194,92 +192,10 @@ class DataFetcherInvoker(
         val name: String = AnnotationUtils.getAnnotationAttributes(annotation)["name"] as String
 
         val parameterName = name.ifBlank { parameterNames[parameterIndex] }
-        val collectionType = annotation.collectionType.java
-        val parameterValue: Any? = environment.getArgument(parameterName)
+        val parameterValue = environment.getArgument<Any?>(parameterName)
 
-        val convertValue: Any? =
-            if (parameterValue is List<*> && collectionType != Object::class.java) {
-                try {
-                    // Return a list of elements that are converted to their collection type, e.e.g. List<Person>, List<String> etc.
-                    parameterValue.map { item -> convertValue(item, parameter, collectionType) }.toList()
-                } catch (ex: Exception) {
-                    throw DgsInvalidInputArgumentException(
-                        "Specified type '$collectionType' is invalid for $parameterName.",
-                        ex
-                    )
-                }
-            } else if (parameterValue is Map<*, *> && parameter.type.isAssignableFrom(Map::class.java)) {
-                parameterValue
-            } else {
-                // Return the converted value mapped to the defined type
-                convertValue(parameterValue, parameter, collectionType)
-            }
-
-        val paramType = parameter.type
-        val optionalValue = getValueAsOptional(convertValue, parameter)
-
-        if (optionalValue != null && !paramType.isPrimitive && !paramType.isAssignableFrom(optionalValue.javaClass)) {
-            throw DgsInvalidInputArgumentException("Specified type '${parameter.type}' is invalid. Found ${parameterValue?.javaClass?.name} instead.")
-        }
-
-        if (convertValue == null && environment.fieldDefinition.arguments.none { it.name == parameterName }) {
-            logger.warn("Unknown argument '$parameterName' on data fetcher ${dgsComponent.javaClass.name}.${method.name}")
-        }
-
-        return optionalValue
+        return inputObjectMapper.convert(parameterValue, parameter.parameterizedType)
     }
-
-    private fun convertValue(parameterValue: Any?, parameter: Parameter, collectionType: Class<out Any>?) =
-        if (parameterValue is Map<*, *>) {
-            // Account for Optional
-            val targetType =
-                if (parameter.type.isAssignableFrom(Optional::class.java) ||
-                    parameter.type.isAssignableFrom(List::class.java) ||
-                    parameter.type.isAssignableFrom(Set::class.java)
-                ) {
-                    if (collectionType != null && collectionType != Object::class.java) {
-                        collectionType
-                    } else {
-                        throw DgsInvalidInputArgumentException("When ${parameter.type.simpleName}<T> is used, the type must be specified using the collectionType argument of the @InputArgument annotation.")
-                    }
-                } else {
-                    parameter.type
-                }
-
-            if (targetType.isKotlinClass()) {
-                inputObjectMapper.mapToKotlinObject(parameterValue as Map<String, *>, targetType.kotlin)
-            } else {
-                inputObjectMapper.mapToJavaObject(parameterValue as Map<String, *>, targetType)
-            }
-        } else if ((parameter.type.isEnum || collectionType?.isEnum == true) && parameterValue != null) {
-            val enumConstants: Array<Enum<*>> =
-                if (parameter.type.isEnum) {
-                    parameter.type.enumConstants as Array<Enum<*>>
-                } else {
-                    collectionType?.enumConstants as Array<Enum<*>>
-                }
-
-            enumConstants.find { it.name == parameterValue }
-                ?: throw DgsInvalidInputArgumentException("Invalid enum value '$parameterValue for enum type ${parameter.type.name}")
-        } else if (parameter.type == Optional::class.java) {
-            val targetType: Class<*> = if (collectionType != Object::class.java) {
-                collectionType!!
-            } else {
-                (parameter.parameterizedType as ParameterizedType).actualTypeArguments[0] as Class<*>
-            }
-
-            if (targetType.isEnum) {
-                (targetType.enumConstants as Array<Enum<*>>).find { it.name == parameterValue }
-            } else {
-                parameterValue
-            }
-        } else {
-            if (parameterValue is List<*> && parameter.type == Set::class.java) {
-                parameterValue.toSet()
-            } else {
-                parameterValue
-            }
-        }
 
     private fun getValueAsOptional(value: Any?, parameter: Parameter) =
         if (parameter.type.isAssignableFrom(Optional::class.java)) {
